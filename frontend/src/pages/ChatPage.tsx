@@ -89,7 +89,7 @@ export default function ChatPage() {
   }, [])
   
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollInView({ behavior: "smooth" })
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
   useEffect(() => {
