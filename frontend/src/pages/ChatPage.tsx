@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, Sparkles, Globe, Code, Plus, Menu, Settings, Zap, Brain, BarChart3 } from 'lucide-react'
+import { Send, Sparkles, Globe, Code, Plus, Menu, Settings, Zap, Brain, BarChart3, Wifi, WifiOff, Image as ImageIcon, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -7,16 +7,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
-import { useQuery } from '@tanstack/react-query'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import ChatMessage from '@/components/chat/ChatMessage'
 import ChatHistory from '@/components/chat/ChatHistory'
 import WebModeToggle from '@/components/chat/WebModeToggle'
 import WebSearchResults from '@/components/chat/WebSearchResults'
 import AgentFlowchart from '@/components/agent/AgentFlowchart'
 import { YetiModels, ModelSelector } from '@/components/chat/ModelSelector'
-import { TaskOrchestrator } from '@/lib/agentCore'
 import { yetiIdentity } from '@/lib/yetiIdentity'
-import { yetiModelRouter } from '@/lib/yetiModelRouter'
+import { backendService, BrowserAgentResponse } from '@/lib/backendService'
 
 // Enhanced message interface
 interface ChatMessageType {
@@ -25,7 +24,20 @@ interface ChatMessageType {
   content: string
   model?: string
   timestamp: string
-  webSearchData?: any
+  webSearchData?: {
+    query: string;
+    results: Array<{
+      title: string;
+      url: string;
+      snippet: string;
+      source: string;
+    }>;
+    total_results: number;
+    search_time: number;
+    sources: string[];
+    error?: string;
+  } | null;
+  browserAgentData?: BrowserAgentResponse | null; // New field for browser agent data
   isIdentityResponse?: boolean
   taskId?: string
   modelUsed?: any
@@ -58,17 +70,26 @@ export default function ChatPage() {
   const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showAgentFlow, setShowAgentFlow] = useState(false)
+  const [backendStatus, setBackendStatus] = useState<'online' | 'offline' | 'checking'>('checking')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const agentRef = useRef<TaskOrchestrator | null>(null)
   
-  // Initialize agent core
+  // Check backend status on mount
   useEffect(() => {
-    agentRef.current = new TaskOrchestrator('user_001', currentChatId)
-  }, [currentChatId])
+    const checkBackend = async () => {
+      const isOnline = await backendService.healthCheck()
+      setBackendStatus(isOnline ? 'online' : 'offline')
+    }
+    
+    checkBackend()
+    
+    // Check every 30 seconds
+    const interval = setInterval(checkBackend, 30000)
+    return () => clearInterval(interval)
+  }, [])
   
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    messagesEndRef.current?.scrollInView({ behavior: "smooth" })
   }
 
   useEffect(() => {
@@ -135,7 +156,7 @@ export default function ChatPage() {
   }
   
   const handleSendMessage = async () => {
-    if (!inputValue.trim() || isTyping || streamingMessage || !agentRef.current) return
+    if (!inputValue.trim() || isTyping || streamingMessage) return
     
     const userMessage: ChatMessageType = { 
       id: Date.now().toString(), 
@@ -151,31 +172,36 @@ export default function ChatPage() {
     setIsTyping(true)
     
     try {
-      // Process through Yeti AI model router
-      const yetiResult = await yetiModelRouter.processWithYetiAI(userInput, selectedModel, {
-        isWebMode
-      })
-      
-      // Also process through agent core for additional capabilities
-      const agentResult = await agentRef.current.processUserInput(userInput, {
-        selectedModel,
-        isWebMode
+      // Call backend service
+      const backendResponse = await backendService.chat({
+        message: userInput,
+        session_id: currentChatId,
+        model: selectedModel,
+        web_mode: isWebMode,
+        context: {}
       })
       
       const messageId = (Date.now() + 1).toString()
       
-      // Use Yeti AI response with agent enhancements
-      const finalResponse = agentResult.webSearchData 
-        ? agentResult.response 
-        : yetiResult.response
-      
+      // If web_mode is active and the backend indicates a web browse action,
+      // trigger the full browser agent and include its data.
+      let browserAgentData: BrowserAgentResponse | null = null;
+      if (isWebMode && backendResponse.task_plan.includes('web_browse') && backendResponse.web_search_data?.query) {
+        // Use the query from web_search_data to trigger the full browser agent
+        // This simulates the agent deciding to browse a specific URL after an initial search
+        // In a real scenario, the backend would return the URL to browse.
+        const targetUrl = backendResponse.web_search_data.results[0]?.url || `https://duckduckgo.com/?q=${encodeURIComponent(backendResponse.web_search_data.query)}`;
+        browserAgentData = await backendService.browse(targetUrl, currentChatId);
+      }
+
       // Start streaming the response
-      simulateStreaming(finalResponse, messageId, {
-        webSearchData: agentResult.webSearchData,
-        isIdentityResponse: agentResult.isIdentityResponse,
-        taskId: agentResult.task?.id,
-        modelUsed: yetiResult.modelUsed,
-        reasoning: yetiResult.reasoning
+      simulateStreaming(backendResponse.response, messageId, {
+        webSearchData: backendResponse.web_search_data,
+        browserAgentData: browserAgentData, // Pass browser agent data here
+        isIdentityResponse: false,
+        taskId: backendResponse.session_id,
+        modelUsed: { displayName: `Yeti AI (${backendResponse.model_used})` },
+        reasoning: backendResponse.reasoning
       })
       
     } catch (error) {
@@ -205,9 +231,6 @@ export default function ChatPage() {
     const newChatId = Date.now().toString()
     setCurrentChatId(newChatId)
     
-    // Initialize new agent instance
-    agentRef.current = new TaskOrchestrator('user_001', newChatId)
-    
     setMessages([{
       id: Date.now().toString(),
       role: 'assistant',
@@ -228,8 +251,6 @@ export default function ChatPage() {
     setIsTyping(false)
     
     setCurrentChatId(chatId)
-    // Initialize agent for selected chat
-    agentRef.current = new TaskOrchestrator('user_001', chatId)
     
     // In a real app, this would load the chat history from the backend
     console.log('Loading chat:', chatId)
@@ -266,6 +287,28 @@ export default function ChatPage() {
           <h1 className="text-xl font-bold text-foreground">{yetiIdentity.name}</h1>
           
           <div className="flex items-center space-x-1">
+            {/* Backend Status Indicator */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge 
+                    variant={backendStatus === 'online' ? 'default' : 'secondary'} 
+                    className="hidden sm:flex items-center text-xs"
+                  >
+                    {backendStatus === 'online' ? (
+                      <Wifi className="h-3 w-3 mr-1" />
+                    ) : (
+                      <WifiOff className="h-3 w-3 mr-1" />
+                    )}
+                    {backendStatus === 'checking' ? 'Checking...' : backendStatus}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Backend Service: {backendStatus}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            
             {isWebMode && (
               <Badge variant="secondary" className="hidden sm:flex items-center">
                 <Zap className="h-3 w-3 mr-1" />
@@ -341,15 +384,17 @@ export default function ChatPage() {
                   </div>
                   
                   <div className="pt-4 border-t">
-                    <h3 className="text-sm font-medium mb-2">Current Model</h3>
+                    <h3 className="text-sm font-medium mb-2">Backend Status</h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Active:</span>
-                        <span>{yetiModelRouter.getModelInfo(selectedModel)?.displayName}</span>
+                        <span className="text-muted-foreground">Service:</span>
+                        <span className={backendStatus === 'online' ? 'text-green-600' : 'text-red-600'}>
+                          {backendStatus}
+                        </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Provider:</span>
-                        <span>{yetiModelRouter.getModelInfo(selectedModel)?.provider}</span>
+                        <span className="text-muted-foreground">Model:</span>
+                        <span>{selectedModel}</span>
                       </div>
                     </div>
                   </div>
@@ -400,6 +445,16 @@ export default function ChatPage() {
           </Sheet>
         </div>
       </header>
+      
+      {/* Backend Status Alert */}
+      {backendStatus === 'offline' && (
+        <Alert className="mx-4 mt-4">
+          <WifiOff className="h-4 w-4" />
+          <AlertDescription>
+            Backend service is offline. Running in demo mode with simulated responses.
+          </AlertDescription>
+        </Alert>
+      )}
       
       {/* Main Chat Area */}
       <div className="flex-grow flex overflow-hidden">
@@ -476,13 +531,64 @@ export default function ChatPage() {
                         </div>
                       )}
                       
-                      {/* Show web search results */}
+                      {/* Show web search results (DuckDuckGo) */}
                       {message.webSearchData && (
                         <div className="ml-12">
                           <WebSearchResults 
                             searchData={message.webSearchData}
                             isLoading={false}
                           />
+                        </div>
+                      )}
+
+                      {/* Show Browser Agent Data (Screenshot + Text) */}
+                      {message.browserAgentData && (
+                        <div className="ml-12 border rounded-lg shadow-sm overflow-hidden">
+                          <div className="p-3 bg-muted/50 flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <Globe className="h-4 w-4 text-primary" />
+                              <span className="font-medium text-sm">Autonomous Browser Agent</span>
+                            </div>
+                            <a 
+                              href={message.browserAgentData.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="text-xs text-primary hover:underline"
+                            >
+                              {message.browserAgentData.url.split('/')[2]}
+                            </a>
+                          </div>
+                          <div className="p-3">
+                            {message.browserAgentData.screenshot_base64 && (
+                              <div className="mb-3">
+                                <img 
+                                  src={`data:image/png;base64,${message.browserAgentData.screenshot_base64}`} 
+                                  alt="Website Screenshot" 
+                                  className="w-full h-auto rounded-md border" 
+                                />
+                                <p className="text-xs text-muted-foreground mt-1 flex items-center">
+                                  <ImageIcon className="h-3 w-3 mr-1" />
+                                  Screenshot of the page
+                                </p>
+                              </div>
+                            )}
+                            {message.browserAgentData.text_content && (
+                              <div>
+                                <p className="text-sm text-muted-foreground line-clamp-5">
+                                  <FileText className="h-4 w-4 inline-block mr-1 align-text-bottom" />
+                                  {message.browserAgentData.text_content}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  (Extracted text content)
+                                </p>
+                              </div>
+                            )}
+                            {message.browserAgentData.error && (
+                              <p className="text-sm text-destructive">
+                                Error: {message.browserAgentData.error}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -532,8 +638,8 @@ export default function ChatPage() {
                 
                 <div className="flex items-center justify-center space-x-2 text-xs text-muted-foreground mt-2">
                   <div className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
-                    <span>Powered by {yetiModelRouter.getModelInfo(selectedModel)?.displayName}</span>
+                    <div className={`w-2 h-2 rounded-full animate-pulse ${backendStatus === 'online' ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+                    <span>Powered by {yetiIdentity.name} {selectedModel}</span>
                   </div>
                   {isWebMode && (
                     <>
