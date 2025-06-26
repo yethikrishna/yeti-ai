@@ -7,10 +7,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
+import { useQuery } from '@tanstack/react-query'
 import ChatMessage from '@/components/chat/ChatMessage'
 import ChatHistory from '@/components/chat/ChatHistory'
 import WebModeToggle from '@/components/chat/WebModeToggle'
+import WebSearchResults from '@/components/chat/WebSearchResults'
 import { AIModels, ModelSelector } from '@/components/chat/ModelSelector'
+import { webSearchService, WebSearchResponse } from '@/lib/webSearch'
 
 // Enhanced mock data with more realistic conversation
 const initialMessages = [
@@ -30,6 +33,7 @@ interface StreamingMessage {
   model: string
   timestamp: string
   isStreaming: boolean
+  webSearchData?: WebSearchResponse
 }
 
 export default function ChatPage() {
@@ -41,8 +45,18 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = useState(false)
   const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [currentSearchQuery, setCurrentSearchQuery] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Web search query using React Query
+  const { data: webSearchData, isLoading: isSearching, error: searchError } = useQuery({
+    queryKey: ['webSearch', currentSearchQuery],
+    queryFn: () => currentSearchQuery ? webSearchService.search(currentSearchQuery) : null,
+    enabled: !!currentSearchQuery && isWebMode,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 2
+  })
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -50,7 +64,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, streamingMessage])
+  }, [messages, streamingMessage, webSearchData])
 
   // Cleanup streaming interval on unmount
   useEffect(() => {
@@ -61,7 +75,7 @@ export default function ChatPage() {
     }
   }, [])
 
-  const simulateStreaming = (fullResponse: string, messageId: string) => {
+  const simulateStreaming = (fullResponse: string, messageId: string, searchData?: WebSearchResponse) => {
     const words = fullResponse.split(' ')
     let currentIndex = 0
     
@@ -72,7 +86,8 @@ export default function ChatPage() {
       content: '',
       model: selectedModel,
       timestamp: new Date().toISOString(),
-      isStreaming: true
+      isStreaming: true,
+      webSearchData: searchData
     }
     
     setStreamingMessage(initialStreamingMessage)
@@ -100,7 +115,8 @@ export default function ChatPage() {
           role: 'assistant' as const,
           content: fullResponse,
           model: selectedModel,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          webSearchData: searchData
         }])
         
         // Clear streaming message
@@ -108,8 +124,27 @@ export default function ChatPage() {
       }
     }, 100) // Adjust speed here (100ms per word)
   }
+
+  const generateWebSearchResponse = (query: string, searchData: WebSearchResponse): string => {
+    if (!searchData.results.length) {
+      return `I searched the web for "${query}" but couldn't find relevant results. This might be due to network issues or the query being too specific. Let me try to help based on my existing knowledge instead.`
+    }
+
+    const topResults = searchData.results.slice(0, 3)
+    const sources = topResults.map(r => new URL(r.url).hostname).join(', ')
+    
+    return `🌐 I found ${searchData.totalResults} results for "${query}" in ${searchData.searchTime}ms from ${searchData.sources.join(', ')}. 
+
+Based on the search results from ${sources}, here's what I found:
+
+${topResults.map((result, index) => 
+  `${index + 1}. **${result.title}**: ${result.snippet.substring(0, 150)}...`
+).join('\n\n')}
+
+The search results provide comprehensive information about your query. You can click on any result above to explore the full content. Would you like me to search for more specific information or help you with something else?`
+  }
   
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim() || isTyping || streamingMessage) return
     
     const userMessage = { 
@@ -125,27 +160,55 @@ export default function ChatPage() {
     setInputValue('')
     setIsTyping(true)
     
+    // If web mode is enabled, trigger search
+    if (isWebMode) {
+      setCurrentSearchQuery(userInput)
+    }
+    
     // Simulate initial delay before streaming starts
-    setTimeout(() => {
-      const webModeResponses = [
-        `🌐 Searching the web for "${userInput}"... I'm browsing multiple sources, taking screenshots, and analyzing real-time data using ${selectedModel}. Let me gather the most current information for you.`,
-        `🔍 Web search activated for "${userInput}". I'm accessing live websites, parsing content, and cross-referencing multiple sources to provide you with up-to-date information using ${selectedModel}.`,
-        `🚀 Autonomous browsing initiated for "${userInput}". I'm navigating websites, extracting data, and analyzing current trends using ${selectedModel} with real-time web capabilities.`
-      ]
+    setTimeout(async () => {
+      let response: string
+      let searchData: WebSearchResponse | undefined
       
-      const standardResponses = [
-        `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}. This is a comprehensive response based on my training data.`,
-        `That's an interesting question about "${userInput}". Based on my knowledge, here's what I can tell you using ${selectedModel}.`,
-        `Great question! I'll analyze "${userInput}" for you using ${selectedModel} based on my existing knowledge base.`
-      ]
+      if (isWebMode && webSearchData) {
+        searchData = webSearchData
+        response = generateWebSearchResponse(userInput, webSearchData)
+      } else if (isWebMode && isSearching) {
+        response = `🔍 Searching the web for "${userInput}"... Please wait while I gather real-time information from multiple sources.`
+      } else if (isWebMode && searchError) {
+        response = `❌ I encountered an error while searching for "${userInput}". Let me help you based on my existing knowledge instead. The error might be due to network connectivity or API limitations.`
+      } else {
+        // Standard responses without web search
+        const standardResponses = [
+          `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}. This response is based on my training data.`,
+          `That's an interesting question about "${userInput}". Based on my knowledge, here's what I can tell you using ${selectedModel}.`,
+          `Great question! I'll analyze "${userInput}" for you using ${selectedModel} based on my existing knowledge base.`
+        ]
+        response = standardResponses[Math.floor(Math.random() * standardResponses.length)]
+      }
       
-      const responses = isWebMode ? webModeResponses : standardResponses
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
       const messageId = (Date.now() + 1).toString()
-      
-      simulateStreaming(randomResponse, messageId)
+      simulateStreaming(response, messageId, searchData)
     }, 800) // Initial delay before streaming starts
   }
+
+  // Effect to handle web search completion
+  useEffect(() => {
+    if (webSearchData && currentSearchQuery && streamingMessage) {
+      // Update streaming message with search data
+      const response = generateWebSearchResponse(currentSearchQuery, webSearchData)
+      
+      // Clear current streaming and start new one with search results
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current)
+        streamingIntervalRef.current = null
+      }
+      
+      const messageId = streamingMessage.id
+      simulateStreaming(response, messageId, webSearchData)
+      setCurrentSearchQuery(null) // Reset search query
+    }
+  }, [webSearchData, currentSearchQuery])
 
   const handleNewChat = () => {
     // Clear any ongoing streaming
@@ -155,6 +218,7 @@ export default function ChatPage() {
     }
     setStreamingMessage(null)
     setIsTyping(false)
+    setCurrentSearchQuery(null)
     
     setMessages([{
       id: Date.now().toString(),
@@ -174,6 +238,7 @@ export default function ChatPage() {
     }
     setStreamingMessage(null)
     setIsTyping(false)
+    setCurrentSearchQuery(null)
     
     setCurrentChatId(chatId)
     // In a real app, this would load the chat history from the backend
@@ -330,11 +395,32 @@ export default function ChatPage() {
               <ScrollArea className="flex-grow pr-4">
                 <div className="space-y-6 py-4 max-w-4xl mx-auto">
                   {displayMessages.map((message) => (
-                    <ChatMessage 
-                      key={message.id} 
-                      message={message}
-                      isStreaming={streamingMessage?.id === message.id}
-                    />
+                    <div key={message.id} className="space-y-4">
+                      <ChatMessage 
+                        message={message}
+                        isStreaming={streamingMessage?.id === message.id}
+                      />
+                      
+                      {/* Show web search results */}
+                      {message.webSearchData && (
+                        <div className="ml-12">
+                          <WebSearchResults 
+                            searchData={message.webSearchData}
+                            isLoading={false}
+                          />
+                        </div>
+                      )}
+                      
+                      {/* Show loading search results for streaming message */}
+                      {streamingMessage?.id === message.id && isSearching && (
+                        <div className="ml-12">
+                          <WebSearchResults 
+                            searchData={{ query: '', results: [], totalResults: 0, searchTime: 0, sources: [] }}
+                            isLoading={true}
+                          />
+                        </div>
+                      )}
+                    </div>
                   ))}
                   
                   {isTyping && (
@@ -383,7 +469,13 @@ export default function ChatPage() {
                       <span>Web browsing active</span>
                     </div>
                     <span>•</span>
-                    <span>Real-time search & screenshots enabled</span>
+                    <span>Real-time search enabled</span>
+                    {isSearching && (
+                      <>
+                        <span>•</span>
+                        <span className="text-primary">Searching...</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

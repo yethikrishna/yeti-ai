@@ -11,6 +11,7 @@ interface ChatMessageProps {
     content: string
     model?: string
     timestamp?: string
+    webSearchData?: any
   }
   isStreaming?: boolean
 }
@@ -71,6 +72,9 @@ export default function ChatMessage({ message, isStreaming = false }: ChatMessag
           <div className="flex items-center gap-2">
             {!isUser && message.model && (
               <span className="font-medium">{message.model}</span>
+            )}
+            {!isUser && message.webSearchData && (
+              <span className="text-primary">• Web Enhanced</span>
             )}
             {message.timestamp && !isStreaming && (
               <span>{formatTime(message.timestamp)}</span>
