@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, Sparkles, Globe, Code, Plus, Menu } from 'lucide-react'
+import { Send, Sparkles, Globe, Code, Plus, Menu, Settings, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet'
+import { Badge } from '@/components/ui/badge'
 import ChatMessage from '@/components/chat/ChatMessage'
 import ChatHistory from '@/components/chat/ChatHistory'
+import WebModeToggle from '@/components/chat/WebModeToggle'
 import { AIModels, ModelSelector } from '@/components/chat/ModelSelector'
 
 // Enhanced mock data with more realistic conversation
@@ -38,6 +40,7 @@ export default function ChatPage() {
   const [currentChatId, setCurrentChatId] = useState('current')
   const [isTyping, setIsTyping] = useState(false)
   const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   
@@ -124,12 +127,19 @@ export default function ChatPage() {
     
     // Simulate initial delay before streaming starts
     setTimeout(() => {
-      const responses = [
-        `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}${isWebMode ? ' with web browsing capabilities' : ''}. This is a comprehensive response that will demonstrate the streaming functionality as each word appears gradually on your screen.`,
-        `That's an interesting question about "${userInput}". Based on my knowledge${isWebMode ? ' and current web data' : ''}, here's what I can tell you. The streaming effect makes the conversation feel more natural and engaging, similar to how ChatGPT displays responses.`,
-        `Great question! I'll analyze "${userInput}" for you using ${selectedModel}${isWebMode ? ' and search for the latest information online' : ''}. This streaming implementation provides a smooth user experience where you can see the response being generated in real-time, word by word.`
+      const webModeResponses = [
+        `🌐 Searching the web for "${userInput}"... I'm browsing multiple sources, taking screenshots, and analyzing real-time data using ${selectedModel}. Let me gather the most current information for you.`,
+        `🔍 Web search activated for "${userInput}". I'm accessing live websites, parsing content, and cross-referencing multiple sources to provide you with up-to-date information using ${selectedModel}.`,
+        `🚀 Autonomous browsing initiated for "${userInput}". I'm navigating websites, extracting data, and analyzing current trends using ${selectedModel} with real-time web capabilities.`
       ]
       
+      const standardResponses = [
+        `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}. This is a comprehensive response based on my training data.`,
+        `That's an interesting question about "${userInput}". Based on my knowledge, here's what I can tell you using ${selectedModel}.`,
+        `Great question! I'll analyze "${userInput}" for you using ${selectedModel} based on my existing knowledge base.`
+      ]
+      
+      const responses = isWebMode ? webModeResponses : standardResponses
       const randomResponse = responses[Math.floor(Math.random() * responses.length)]
       const messageId = (Date.now() + 1).toString()
       
@@ -199,6 +209,13 @@ export default function ChatPage() {
           
           <Sparkles className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">Yeti AI</h1>
+          
+          {isWebMode && (
+            <Badge variant="secondary" className="hidden sm:flex items-center">
+              <Zap className="h-3 w-3 mr-1" />
+              Web Mode
+            </Badge>
+          )}
         </div>
         
         <div className="flex items-center space-x-2">
@@ -207,23 +224,57 @@ export default function ChatPage() {
             onValueChange={setSelectedModel} 
           />
           
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button 
-                  variant={isWebMode ? "default" : "outline"}
-                  size="icon"
-                  onClick={() => setIsWebMode(!isWebMode)}
-                  className="transition-all"
-                >
-                  <Globe className={`h-5 w-5 ${isWebMode ? 'text-primary-foreground' : 'text-muted-foreground'}`} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Web Browsing {isWebMode ? 'Enabled' : 'Disabled'}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          {/* Settings Sheet for Web Mode Toggle */}
+          <Sheet open={showSettings} onOpenChange={setShowSettings}>
+            <SheetTrigger asChild>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="icon">
+                      <Settings className="h-5 w-5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Settings & Web Mode</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-96">
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-semibold mb-2">Settings</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Configure your AI assistant preferences
+                  </p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Web Browsing</h3>
+                    <WebModeToggle 
+                      isWebMode={isWebMode}
+                      onToggle={setIsWebMode}
+                    />
+                  </div>
+                  
+                  <div className="pt-4 border-t">
+                    <h3 className="text-sm font-medium mb-2">Quick Actions</h3>
+                    <div className="space-y-2">
+                      <Button variant="outline" className="w-full justify-start" size="sm">
+                        <Globe className="mr-2 h-4 w-4" />
+                        Browse Current Page
+                      </Button>
+                      <Button variant="outline" className="w-full justify-start" size="sm">
+                        <Code className="mr-2 h-4 w-4" />
+                        Generate Code
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </header>
       
@@ -241,6 +292,15 @@ export default function ChatPage() {
                 <Plus className="mr-2 h-4 w-4" />
                 New Chat
               </Button>
+            </div>
+            
+            {/* Web Mode Toggle in Sidebar */}
+            <div className="mb-4">
+              <WebModeToggle 
+                isWebMode={isWebMode}
+                onToggle={setIsWebMode}
+                className="w-full"
+              />
             </div>
             
             <div className="flex-grow">
@@ -302,7 +362,7 @@ export default function ChatPage() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                    placeholder="Ask anything..."
+                    placeholder={isWebMode ? "Ask anything... (Web search enabled)" : "Ask anything..."}
                     className="pr-12 py-6 text-base"
                     disabled={isTyping || !!streamingMessage}
                   />
@@ -317,8 +377,13 @@ export default function ChatPage() {
                 </div>
                 
                 {isWebMode && (
-                  <div className="text-xs text-muted-foreground mt-2 text-center">
-                    🌐 Web browsing is enabled. Yeti AI will search the web for up-to-date information.
+                  <div className="flex items-center justify-center space-x-2 text-xs text-muted-foreground mt-2">
+                    <div className="flex items-center space-x-1">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span>Web browsing active</span>
+                    </div>
+                    <span>•</span>
+                    <span>Real-time search & screenshots enabled</span>
                   </div>
                 )}
               </div>
