@@ -18,6 +18,9 @@ from io import BytesIO
 # Playwright imports
 from playwright.async_api import async_playwright, Page, BrowserContext
 
+# 2Captcha imports
+from twocaptcha import TwoCaptcha
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,6 +45,12 @@ app.add_middleware(
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY")
 WEBHOOK_URL = os.getenv("YETI_WEBHOOK_URL")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+TWOCAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY")
+
+# Initialize 2Captcha solver
+solver = TwoCaptcha(TWOCAPTCHA_API_KEY) if TWOCAPTCHA_API_KEY else None
+if not solver:
+    logger.warning("TWOCAPTCHA_API_KEY not found. CAPTCHA solving will be skipped.")
 
 if not OPENROUTER_KEY:
     logger.warning("OPENROUTER_API_KEY not found. Some features may not work.")
@@ -268,12 +277,64 @@ async def navigate_and_screenshot(url: str, session_id: str, headless: bool = Tr
         logger.info(f"Navigating to {url}")
         await page.goto(url, wait_until="domcontentloaded", timeout=60000) # Increased timeout
         
-        # Basic CAPTCHA detection/bypass (can be enhanced)
-        if await page.locator('iframe[src*="captcha"]').count() > 0:
-            logger.warning(f"CAPTCHA detected on {url}. Attempting to bypass...")
-            # This is a placeholder. Real bypass requires more advanced techniques
-            # e.g., using 2Captcha API, or undetected_chromedriver (if using Selenium)
-            await page.wait_for_timeout(5000) # Wait for potential auto-solve
+        # CAPTCHA detection and solving
+        if solver:
+            # Check for reCAPTCHA v2
+            recaptcha_iframe = await page.locator('iframe[src*="recaptcha/api2/anchor"]').count() > 0
+            if recaptcha_iframe:
+                logger.info(f"reCAPTCHA v2 detected on {url}. Attempting to solve...")
+                try:
+                    sitekey_element = await page.locator('div.g-recaptcha').get_attribute('data-sitekey')
+                    if sitekey_element:
+                        sitekey = sitekey_element
+                        logger.info(f"Solving reCAPTCHA v2 for sitekey: {sitekey}")
+                        result = solver.recaptcha(sitekey=sitekey, url=url)
+                        if result and result['code']:
+                            await page.evaluate(f'document.getElementById("g-recaptcha-response").innerHTML="{result["code"]}";')
+                            await page.evaluate('___grecaptcha_cfg.clients[0].F.F.callback();') # Trigger callback
+                            logger.info("reCAPTCHA v2 solved successfully.")
+                            await page.wait_for_timeout(3000) # Wait for page to react
+                        else:
+                            logger.warning(f"Failed to get reCAPTCHA v2 solution: {result}")
+                    else:
+                        logger.warning("Could not find reCAPTCHA v2 sitekey.")
+                except Exception as captcha_e:
+                    logger.error(f"Error solving reCAPTCHA v2: {captcha_e}")
+            
+            # Check for hCaptcha (common alternative)
+            hcaptcha_iframe = await page.locator('iframe[src*="hcaptcha.com/captcha.html"]').count() > 0
+            if hcaptcha_iframe:
+                logger.info(f"hCaptcha detected on {url}. Attempting to solve...")
+                try:
+                    sitekey_element = await page.locator('div.h-captcha').get_attribute('data-sitekey')
+                    if sitekey_element:
+                        sitekey = sitekey_element
+                        logger.info(f"Solving hCaptcha for sitekey: {sitekey}")
+                        result = solver.hcaptcha(sitekey=sitekey, url=url)
+                        if result and result['code']:
+                            await page.evaluate(f'document.getElementById("h-captcha-response").innerHTML="{result["code"]}";')
+                            await page.evaluate('document.querySelector(".h-captcha").dispatchEvent(new Event("submit"));') # Trigger submit
+                            logger.info("hCaptcha solved successfully.")
+                            await page.wait_for_timeout(3000) # Wait for page to react
+                        else:
+                            logger.warning(f"Failed to get hCaptcha solution: {result}")
+                    else:
+                        logger.warning("Could not find hCaptcha sitekey.")
+                except Exception as captcha_e:
+                    logger.error(f"Error solving hCaptcha: {captcha_e}")
+
+            # Generic image CAPTCHA (requires more advanced detection/screenshot)
+            # This is a simplified example, real implementation would need to identify the image element
+            # if await page.locator('img[src*="captcha"]').count() > 0:
+            #     logger.info(f"Generic image CAPTCHA detected on {url}. Attempting to solve...")
+            #     try:
+            #         # This would require taking a screenshot of the CAPTCHA image
+            #         # and sending it to 2Captcha. For now, just a log.
+            #         logger.warning("Image CAPTCHA solving is not fully implemented yet.")
+            #     except Exception as captcha_e:
+            #         logger.error(f"Error solving image CAPTCHA: {captcha_e}")
+        else:
+            logger.info("2Captcha solver not initialized. Skipping CAPTCHA detection.")
         
         # Take screenshot
         screenshot_bytes = await page.screenshot(full_page=True)
