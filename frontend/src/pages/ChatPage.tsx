@@ -21,6 +21,15 @@ const initialMessages = [
   }
 ]
 
+interface StreamingMessage {
+  id: string
+  role: 'assistant'
+  content: string
+  model: string
+  timestamp: string
+  isStreaming: boolean
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState(initialMessages)
   const [inputValue, setInputValue] = useState('')
@@ -28,7 +37,9 @@ export default function ChatPage() {
   const [isWebMode, setIsWebMode] = useState(false)
   const [currentChatId, setCurrentChatId] = useState('current')
   const [isTyping, setIsTyping] = useState(false)
+  const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -36,10 +47,67 @@ export default function ChatPage() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, streamingMessage])
+
+  // Cleanup streaming interval on unmount
+  useEffect(() => {
+    return () => {
+      if (streamingIntervalRef.current) {
+        clearInterval(streamingIntervalRef.current)
+      }
+    }
+  }, [])
+
+  const simulateStreaming = (fullResponse: string, messageId: string) => {
+    const words = fullResponse.split(' ')
+    let currentIndex = 0
+    
+    // Initialize streaming message
+    const initialStreamingMessage: StreamingMessage = {
+      id: messageId,
+      role: 'assistant',
+      content: '',
+      model: selectedModel,
+      timestamp: new Date().toISOString(),
+      isStreaming: true
+    }
+    
+    setStreamingMessage(initialStreamingMessage)
+    setIsTyping(false)
+
+    // Stream words one by one
+    streamingIntervalRef.current = setInterval(() => {
+      if (currentIndex < words.length) {
+        const currentContent = words.slice(0, currentIndex + 1).join(' ')
+        setStreamingMessage(prev => prev ? {
+          ...prev,
+          content: currentContent
+        } : null)
+        currentIndex++
+      } else {
+        // Streaming complete
+        if (streamingIntervalRef.current) {
+          clearInterval(streamingIntervalRef.current)
+          streamingIntervalRef.current = null
+        }
+        
+        // Add final message to messages array
+        setMessages(prev => [...prev, {
+          id: messageId,
+          role: 'assistant' as const,
+          content: fullResponse,
+          model: selectedModel,
+          timestamp: new Date().toISOString()
+        }])
+        
+        // Clear streaming message
+        setStreamingMessage(null)
+      }
+    }, 100) // Adjust speed here (100ms per word)
+  }
   
   const handleSendMessage = () => {
-    if (!inputValue.trim()) return
+    if (!inputValue.trim() || isTyping || streamingMessage) return
     
     const userMessage = { 
       id: Date.now().toString(), 
@@ -50,31 +118,34 @@ export default function ChatPage() {
     }
     
     setMessages(prev => [...prev, userMessage])
+    const userInput = inputValue
     setInputValue('')
     setIsTyping(true)
     
-    // Simulate AI response with more realistic delay
+    // Simulate initial delay before streaming starts
     setTimeout(() => {
       const responses = [
-        `I understand you're asking about "${inputValue}". Let me help you with that using ${selectedModel}${isWebMode ? ' with web browsing capabilities' : ''}.`,
-        `That's an interesting question about "${inputValue}". Based on my knowledge${isWebMode ? ' and current web data' : ''}, here's what I can tell you...`,
-        `Great question! I'll analyze "${inputValue}" for you using ${selectedModel}${isWebMode ? ' and search for the latest information online' : ''}.`
+        `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}${isWebMode ? ' with web browsing capabilities' : ''}. This is a comprehensive response that will demonstrate the streaming functionality as each word appears gradually on your screen.`,
+        `That's an interesting question about "${userInput}". Based on my knowledge${isWebMode ? ' and current web data' : ''}, here's what I can tell you. The streaming effect makes the conversation feel more natural and engaging, similar to how ChatGPT displays responses.`,
+        `Great question! I'll analyze "${userInput}" for you using ${selectedModel}${isWebMode ? ' and search for the latest information online' : ''}. This streaming implementation provides a smooth user experience where you can see the response being generated in real-time, word by word.`
       ]
       
       const randomResponse = responses[Math.floor(Math.random() * responses.length)]
+      const messageId = (Date.now() + 1).toString()
       
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant' as const,
-        content: randomResponse,
-        model: selectedModel,
-        timestamp: new Date().toISOString()
-      }])
-      setIsTyping(false)
-    }, 1500)
+      simulateStreaming(randomResponse, messageId)
+    }, 800) // Initial delay before streaming starts
   }
 
   const handleNewChat = () => {
+    // Clear any ongoing streaming
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current)
+      streamingIntervalRef.current = null
+    }
+    setStreamingMessage(null)
+    setIsTyping(false)
+    
     setMessages([{
       id: Date.now().toString(),
       role: 'assistant' as const,
@@ -86,10 +157,23 @@ export default function ChatPage() {
   }
 
   const handleSelectChat = (chatId: string) => {
+    // Clear any ongoing streaming when switching chats
+    if (streamingIntervalRef.current) {
+      clearInterval(streamingIntervalRef.current)
+      streamingIntervalRef.current = null
+    }
+    setStreamingMessage(null)
+    setIsTyping(false)
+    
     setCurrentChatId(chatId)
     // In a real app, this would load the chat history from the backend
     console.log('Loading chat:', chatId)
   }
+
+  // Combine regular messages with streaming message for display
+  const displayMessages = streamingMessage 
+    ? [...messages, streamingMessage]
+    : messages
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background">
@@ -185,8 +269,12 @@ export default function ChatPage() {
             <TabsContent value="chat" className="flex-grow flex flex-col p-4 pt-0 space-y-4 data-[state=active]:h-full">
               <ScrollArea className="flex-grow pr-4">
                 <div className="space-y-6 py-4 max-w-4xl mx-auto">
-                  {messages.map((message) => (
-                    <ChatMessage key={message.id} message={message} />
+                  {displayMessages.map((message) => (
+                    <ChatMessage 
+                      key={message.id} 
+                      message={message}
+                      isStreaming={streamingMessage?.id === message.id}
+                    />
                   ))}
                   
                   {isTyping && (
@@ -216,13 +304,13 @@ export default function ChatPage() {
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                     placeholder="Ask anything..."
                     className="pr-12 py-6 text-base"
-                    disabled={isTyping}
+                    disabled={isTyping || !!streamingMessage}
                   />
                   <Button 
                     size="icon" 
                     className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 w-8"
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isTyping}
+                    disabled={!inputValue.trim() || isTyping || !!streamingMessage}
                   >
                     <Send className="h-4 w-4" />
                   </Button>

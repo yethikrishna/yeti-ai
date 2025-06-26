@@ -12,9 +12,10 @@ interface ChatMessageProps {
     model?: string
     timestamp?: string
   }
+  isStreaming?: boolean
 }
 
-export default function ChatMessage({ message }: ChatMessageProps) {
+export default function ChatMessage({ message, isStreaming = false }: ChatMessageProps) {
   const [showActions, setShowActions] = useState(false)
   const isUser = message.role === 'user'
   
@@ -43,7 +44,10 @@ export default function ChatMessage({ message }: ChatMessageProps) {
         {isUser ? (
           <User className="h-4 w-4 text-primary-foreground" />
         ) : (
-          <Sparkles className="h-4 w-4 text-primary" />
+          <Sparkles className={cn(
+            "h-4 w-4 text-primary",
+            isStreaming && "animate-pulse"
+          )} />
         )}
       </Avatar>
       
@@ -52,7 +56,12 @@ export default function ChatMessage({ message }: ChatMessageProps) {
         isUser ? "bg-primary text-primary-foreground" : "bg-card border"
       )}>
         <div className="prose prose-sm dark:prose-invert max-w-none">
-          <p className="whitespace-pre-wrap">{message.content}</p>
+          <p className="whitespace-pre-wrap">
+            {message.content}
+            {isStreaming && (
+              <span className="inline-block w-2 h-5 bg-primary ml-1 animate-pulse" />
+            )}
+          </p>
         </div>
         
         <div className={cn(
@@ -63,12 +72,15 @@ export default function ChatMessage({ message }: ChatMessageProps) {
             {!isUser && message.model && (
               <span className="font-medium">{message.model}</span>
             )}
-            {message.timestamp && (
+            {message.timestamp && !isStreaming && (
               <span>{formatTime(message.timestamp)}</span>
+            )}
+            {isStreaming && (
+              <span className="text-primary animate-pulse">Generating...</span>
             )}
           </div>
           
-          {!isUser && showActions && (
+          {!isUser && showActions && !isStreaming && (
             <div className="flex items-center gap-1">
               <Button 
                 variant="ghost" 
