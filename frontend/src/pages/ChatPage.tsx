@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Send, Sparkles, Globe, Code, Plus, Menu, Settings, Zap } from 'lucide-react'
+import { Send, Sparkles, Globe, Code, Plus, Menu, Settings, Zap, Brain } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -13,31 +13,39 @@ import ChatHistory from '@/components/chat/ChatHistory'
 import WebModeToggle from '@/components/chat/WebModeToggle'
 import WebSearchResults from '@/components/chat/WebSearchResults'
 import { AIModels, ModelSelector } from '@/components/chat/ModelSelector'
-import { webSearchService, WebSearchResponse } from '@/lib/webSearch'
+import { TaskOrchestrator } from '@/lib/agentCore'
+import { yetiIdentity } from '@/lib/yetiIdentity'
 
-// Enhanced mock data with more realistic conversation
-const initialMessages = [
+// Enhanced message interface
+interface ChatMessageType {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  model?: string
+  timestamp: string
+  webSearchData?: any
+  isIdentityResponse?: boolean
+  taskId?: string
+}
+
+// Enhanced mock data with identity awareness
+const initialMessages: ChatMessageType[] = [
   { 
     id: '1', 
-    role: 'assistant' as const, 
-    content: 'Hello! I\'m Yeti AI, your autonomous AI assistant. I can help with research, coding, web browsing and more. What can I do for you today?',
+    role: 'assistant', 
+    content: `Hello! I'm ${yetiIdentity.name}, your autonomous AI assistant created by ${yetiIdentity.creator.name}. I can help with research, coding, web browsing and much more. I'm equipped with advanced capabilities including real-time web search, autonomous browsing, and code generation. What can I do for you today?`,
     model: 'gemini-pro',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    isIdentityResponse: true
   }
 ]
 
-interface StreamingMessage {
-  id: string
-  role: 'assistant'
-  content: string
-  model: string
-  timestamp: string
+interface StreamingMessage extends ChatMessageType {
   isStreaming: boolean
-  webSearchData?: WebSearchResponse
 }
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState(initialMessages)
+  const [messages, setMessages] = useState<ChatMessageType[]>(initialMessages)
   const [inputValue, setInputValue] = useState('')
   const [selectedModel, setSelectedModel] = useState<AIModels>('gemini-pro')
   const [isWebMode, setIsWebMode] = useState(false)
@@ -45,18 +53,14 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = useState(false)
   const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [currentSearchQuery, setCurrentSearchQuery] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const agentRef = useRef<TaskOrchestrator | null>(null)
   
-  // Web search query using React Query
-  const { data: webSearchData, isLoading: isSearching, error: searchError } = useQuery({
-    queryKey: ['webSearch', currentSearchQuery],
-    queryFn: () => currentSearchQuery ? webSearchService.search(currentSearchQuery) : null,
-    enabled: !!currentSearchQuery && isWebMode,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: 2
-  })
+  // Initialize agent core
+  useEffect(() => {
+    agentRef.current = new TaskOrchestrator('user_001', currentChatId)
+  }, [currentChatId])
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -64,7 +68,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, streamingMessage, webSearchData])
+  }, [messages, streamingMessage])
 
   // Cleanup streaming interval on unmount
   useEffect(() => {
@@ -75,7 +79,7 @@ export default function ChatPage() {
     }
   }, [])
 
-  const simulateStreaming = (fullResponse: string, messageId: string, searchData?: WebSearchResponse) => {
+  const simulateStreaming = (fullResponse: string, messageId: string, messageData: Partial<ChatMessageType>) => {
     const words = fullResponse.split(' ')
     let currentIndex = 0
     
@@ -87,7 +91,7 @@ export default function ChatPage() {
       model: selectedModel,
       timestamp: new Date().toISOString(),
       isStreaming: true,
-      webSearchData: searchData
+      ...messageData
     }
     
     setStreamingMessage(initialStreamingMessage)
@@ -112,44 +116,25 @@ export default function ChatPage() {
         // Add final message to messages array
         setMessages(prev => [...prev, {
           id: messageId,
-          role: 'assistant' as const,
+          role: 'assistant',
           content: fullResponse,
           model: selectedModel,
           timestamp: new Date().toISOString(),
-          webSearchData: searchData
+          ...messageData
         }])
         
         // Clear streaming message
         setStreamingMessage(null)
       }
-    }, 100) // Adjust speed here (100ms per word)
-  }
-
-  const generateWebSearchResponse = (query: string, searchData: WebSearchResponse): string => {
-    if (!searchData.results.length) {
-      return `I searched the web for "${query}" but couldn't find relevant results. This might be due to network issues or the query being too specific. Let me try to help based on my existing knowledge instead.`
-    }
-
-    const topResults = searchData.results.slice(0, 3)
-    const sources = topResults.map(r => new URL(r.url).hostname).join(', ')
-    
-    return `🌐 I found ${searchData.totalResults} results for "${query}" in ${searchData.searchTime}ms from ${searchData.sources.join(', ')}. 
-
-Based on the search results from ${sources}, here's what I found:
-
-${topResults.map((result, index) => 
-  `${index + 1}. **${result.title}**: ${result.snippet.substring(0, 150)}...`
-).join('\n\n')}
-
-The search results provide comprehensive information about your query. You can click on any result above to explore the full content. Would you like me to search for more specific information or help you with something else?`
+    }, 80) // Slightly faster streaming for better UX
   }
   
   const handleSendMessage = async () => {
-    if (!inputValue.trim() || isTyping || streamingMessage) return
+    if (!inputValue.trim() || isTyping || streamingMessage || !agentRef.current) return
     
-    const userMessage = { 
+    const userMessage: ChatMessageType = { 
       id: Date.now().toString(), 
-      role: 'user' as const, 
+      role: 'user', 
       content: inputValue,
       model: selectedModel,
       timestamp: new Date().toISOString()
@@ -160,55 +145,36 @@ The search results provide comprehensive information about your query. You can c
     setInputValue('')
     setIsTyping(true)
     
-    // If web mode is enabled, trigger search
-    if (isWebMode) {
-      setCurrentSearchQuery(userInput)
-    }
-    
-    // Simulate initial delay before streaming starts
-    setTimeout(async () => {
-      let response: string
-      let searchData: WebSearchResponse | undefined
-      
-      if (isWebMode && webSearchData) {
-        searchData = webSearchData
-        response = generateWebSearchResponse(userInput, webSearchData)
-      } else if (isWebMode && isSearching) {
-        response = `🔍 Searching the web for "${userInput}"... Please wait while I gather real-time information from multiple sources.`
-      } else if (isWebMode && searchError) {
-        response = `❌ I encountered an error while searching for "${userInput}". Let me help you based on my existing knowledge instead. The error might be due to network connectivity or API limitations.`
-      } else {
-        // Standard responses without web search
-        const standardResponses = [
-          `I understand you're asking about "${userInput}". Let me help you with that using ${selectedModel}. This response is based on my training data.`,
-          `That's an interesting question about "${userInput}". Based on my knowledge, here's what I can tell you using ${selectedModel}.`,
-          `Great question! I'll analyze "${userInput}" for you using ${selectedModel} based on my existing knowledge base.`
-        ]
-        response = standardResponses[Math.floor(Math.random() * standardResponses.length)]
-      }
+    try {
+      // Process through agent core
+      const result = await agentRef.current.processUserInput(userInput, {
+        selectedModel,
+        isWebMode
+      })
       
       const messageId = (Date.now() + 1).toString()
-      simulateStreaming(response, messageId, searchData)
-    }, 800) // Initial delay before streaming starts
-  }
-
-  // Effect to handle web search completion
-  useEffect(() => {
-    if (webSearchData && currentSearchQuery && streamingMessage) {
-      // Update streaming message with search data
-      const response = generateWebSearchResponse(currentSearchQuery, webSearchData)
       
-      // Clear current streaming and start new one with search results
-      if (streamingIntervalRef.current) {
-        clearInterval(streamingIntervalRef.current)
-        streamingIntervalRef.current = null
-      }
+      // Start streaming the response
+      simulateStreaming(result.response, messageId, {
+        webSearchData: result.webSearchData,
+        isIdentityResponse: result.isIdentityResponse,
+        taskId: result.task?.id
+      })
       
-      const messageId = streamingMessage.id
-      simulateStreaming(response, messageId, webSearchData)
-      setCurrentSearchQuery(null) // Reset search query
+    } catch (error) {
+      console.error('Error processing message:', error)
+      setIsTyping(false)
+      
+      // Add error message
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: "I encountered an error while processing your request. Please try again.",
+        model: selectedModel,
+        timestamp: new Date().toISOString()
+      }])
     }
-  }, [webSearchData, currentSearchQuery])
+  }
 
   const handleNewChat = () => {
     // Clear any ongoing streaming
@@ -218,16 +184,21 @@ The search results provide comprehensive information about your query. You can c
     }
     setStreamingMessage(null)
     setIsTyping(false)
-    setCurrentSearchQuery(null)
+    
+    const newChatId = Date.now().toString()
+    setCurrentChatId(newChatId)
+    
+    // Initialize new agent instance
+    agentRef.current = new TaskOrchestrator('user_001', newChatId)
     
     setMessages([{
       id: Date.now().toString(),
-      role: 'assistant' as const,
-      content: 'Hello! I\'m ready to help you with a new conversation. What would you like to discuss?',
+      role: 'assistant',
+      content: `Hello! I'm ${yetiIdentity.name}, ready to help you with a new conversation. I'm an autonomous AI assistant with advanced capabilities including web browsing, code generation, and real-time search. What would you like to discuss?`,
       model: selectedModel,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      isIdentityResponse: true
     }])
-    setCurrentChatId(Date.now().toString())
   }
 
   const handleSelectChat = (chatId: string) => {
@@ -238,9 +209,11 @@ The search results provide comprehensive information about your query. You can c
     }
     setStreamingMessage(null)
     setIsTyping(false)
-    setCurrentSearchQuery(null)
     
     setCurrentChatId(chatId)
+    // Initialize agent for selected chat
+    agentRef.current = new TaskOrchestrator('user_001', chatId)
+    
     // In a real app, this would load the chat history from the backend
     console.log('Loading chat:', chatId)
   }
@@ -273,14 +246,20 @@ The search results provide comprehensive information about your query. You can c
           </Sheet>
           
           <Sparkles className="h-6 w-6 text-primary" />
-          <h1 className="text-xl font-bold text-foreground">Yeti AI</h1>
+          <h1 className="text-xl font-bold text-foreground">{yetiIdentity.name}</h1>
           
-          {isWebMode && (
-            <Badge variant="secondary" className="hidden sm:flex items-center">
-              <Zap className="h-3 w-3 mr-1" />
-              Web Mode
+          <div className="flex items-center space-x-1">
+            {isWebMode && (
+              <Badge variant="secondary" className="hidden sm:flex items-center">
+                <Zap className="h-3 w-3 mr-1" />
+                Web Mode
+              </Badge>
+            )}
+            <Badge variant="outline" className="hidden md:flex items-center text-xs">
+              <Brain className="h-3 w-3 mr-1" />
+              Autonomous
             </Badge>
-          )}
+          </div>
         </div>
         
         <div className="flex items-center space-x-2">
@@ -300,7 +279,7 @@ The search results provide comprehensive information about your query. You can c
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Settings & Web Mode</p>
+                    <p>Settings & Agent Configuration</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -308,19 +287,37 @@ The search results provide comprehensive information about your query. You can c
             <SheetContent side="right" className="w-96">
               <div className="space-y-6">
                 <div>
-                  <h2 className="text-lg font-semibold mb-2">Settings</h2>
+                  <h2 className="text-lg font-semibold mb-2">Agent Configuration</h2>
                   <p className="text-sm text-muted-foreground">
-                    Configure your AI assistant preferences
+                    Configure your autonomous AI assistant
                   </p>
                 </div>
                 
                 <div className="space-y-4">
                   <div>
-                    <h3 className="text-sm font-medium mb-3">Web Browsing</h3>
+                    <h3 className="text-sm font-medium mb-3">Autonomous Capabilities</h3>
                     <WebModeToggle 
                       isWebMode={isWebMode}
                       onToggle={setIsWebMode}
                     />
+                  </div>
+                  
+                  <div className="pt-4 border-t">
+                    <h3 className="text-sm font-medium mb-2">Agent Info</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Creator:</span>
+                        <span>{yetiIdentity.creator.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Version:</span>
+                        <span>{yetiIdentity.version}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Capabilities:</span>
+                        <span>{yetiIdentity.capabilities.length}</span>
+                      </div>
+                    </div>
                   </div>
                   
                   <div className="pt-4 border-t">
@@ -333,6 +330,10 @@ The search results provide comprehensive information about your query. You can c
                       <Button variant="outline" className="w-full justify-start" size="sm">
                         <Code className="mr-2 h-4 w-4" />
                         Generate Code
+                      </Button>
+                      <Button variant="outline" className="w-full justify-start" size="sm">
+                        <Brain className="mr-2 h-4 w-4" />
+                        Agent Memory
                       </Button>
                     </div>
                   </div>
@@ -410,29 +411,22 @@ The search results provide comprehensive information about your query. You can c
                           />
                         </div>
                       )}
-                      
-                      {/* Show loading search results for streaming message */}
-                      {streamingMessage?.id === message.id && isSearching && (
-                        <div className="ml-12">
-                          <WebSearchResults 
-                            searchData={{ query: '', results: [], totalResults: 0, searchTime: 0, sources: [] }}
-                            isLoading={true}
-                          />
-                        </div>
-                      )}
                     </div>
                   ))}
                   
                   {isTyping && (
                     <div className="flex items-start gap-4 animate-fade-in">
                       <div className="h-8 w-8 rounded-full bg-secondary border flex items-center justify-center">
-                        <Sparkles className="h-4 w-4 text-primary animate-pulse" />
+                        <Brain className="h-4 w-4 text-primary animate-pulse" />
                       </div>
                       <div className="bg-card rounded-lg p-4">
-                        <div className="flex space-x-1">
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                        <div className="flex items-center space-x-2">
+                          <div className="flex space-x-1">
+                            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
+                            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                          </div>
+                          <span className="text-xs text-muted-foreground">Agent processing...</span>
                         </div>
                       </div>
                     </div>
@@ -448,7 +442,7 @@ The search results provide comprehensive information about your query. You can c
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                    placeholder={isWebMode ? "Ask anything... (Web search enabled)" : "Ask anything..."}
+                    placeholder={isWebMode ? "Ask anything... (Autonomous web browsing enabled)" : "Ask anything..."}
                     className="pr-12 py-6 text-base"
                     disabled={isTyping || !!streamingMessage}
                   />
@@ -466,16 +460,10 @@ The search results provide comprehensive information about your query. You can c
                   <div className="flex items-center justify-center space-x-2 text-xs text-muted-foreground mt-2">
                     <div className="flex items-center space-x-1">
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                      <span>Web browsing active</span>
+                      <span>Autonomous agent active</span>
                     </div>
                     <span>•</span>
-                    <span>Real-time search enabled</span>
-                    {isSearching && (
-                      <>
-                        <span>•</span>
-                        <span className="text-primary">Searching...</span>
-                      </>
-                    )}
+                    <span>Real-time web browsing & analysis</span>
                   </div>
                 )}
               </div>
