@@ -152,9 +152,9 @@ class BackendService {
     }
   }
 
-  async browse(url: string, sessionId?: string, headless: boolean = true): Promise<BrowserAgentResponse> {
+  async browse(url: string, session_id?: string, headless: boolean = true): Promise<BrowserAgentResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/agent/browse?url=${encodeURIComponent(url)}&session_id=${sessionId || ''}&headless=${headless}`, {
+      const response = await fetch(`${this.baseUrl}/agent/browse?url=${encodeURIComponent(url)}&session_id=${session_id || ''}&headless=${headless}`, {
         method: 'POST'
       })
 

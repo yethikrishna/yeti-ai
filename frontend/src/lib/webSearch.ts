@@ -29,11 +29,6 @@ class WebSearchService {
     // The full browser agent (navigate_and_screenshot) is exposed via backendService.browse
     // and can be called directly when needed for visual browsing.
 
-    // For now, this function will simulate a direct search result structure
-    // based on what the backend's browse_web_and_summarize would return.
-    // In a more integrated system, the backend's /chat endpoint would return
-    // the web_search_data directly.
-
     // This is a placeholder to satisfy the frontend's current expectation of webSearchService.search
     // The actual web browsing with screenshot will be triggered by the /agent/browse endpoint.
     console.warn("webSearchService.search is deprecated. Use backendService.chat with web_mode or backendService.browse directly.");
