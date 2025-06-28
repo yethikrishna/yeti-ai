@@ -10,8 +10,8 @@
   command = "npm run build"
 
   # Publish directory: The directory containing the built static assets.
-  # Vite's default output directory is "dist".
-  publish = "frontend/dist/"
+  # Vite's default output directory is "dist". This is relative to the 'base' directory.
+  publish = "dist/"
 
 # Settings for the development environment (netlify dev)
 [dev]
