@@ -1,0 +1,45 @@
+# This is a Netlify configuration file.
+# It specifies how Netlify should build and deploy the site.
+
+[build]
+  # Base directory: The directory where the frontend code is located.
+  base = "frontend/"
+
+  # Build command: The command to build the frontend.
+  # We use "npm run build" which is defined in frontend/package.json and executes "vite build".
+  command = "npm run build"
+
+  # Publish directory: The directory containing the built static assets.
+  # Vite's default output directory is "dist".
+  publish = "frontend/dist/"
+
+# Settings for the development environment (netlify dev)
+[dev]
+  # Command to run the development server
+  command = "npm run dev" # This will run "vite"
+  # Port for the development server
+  port = 5173 # Default Vite port, ensure it matches your vite.config.ts if changed
+  # Directory to serve static files from, relative to the base directory
+  publish = "dist" # Vite's dev server serves from memory, but this might be needed for some Netlify dev features
+  # Auto-launch browser
+  # autoLaunch = false # Optional: set to true if you want Netlify dev to open the browser
+
+# Redirects and headers rules can also be defined in this file
+# However, for SPAs, it's common to use a _redirects file in the publish directory.
+# [[redirects]]
+#  from = "/*"
+#  to = "/index.html"
+#  status = 200
+#  force = false # Set to true if you want this rule to override existing files (not recommended for SPAs)
+
+# If you have functions:
+# [functions]
+#  directory = "netlify/functions" # Or your backend/functions directory if you adapt it for Netlify functions
+#  node_bundler = "esbuild"
+#  included_files = ["!node_modules/**"] # Example to include/exclude files
+#  external_node_modules = ["express"] # Example
+
+# Note: If you have a backend that needs to run,
+# you'll need to configure it separately, possibly using Netlify Functions
+# or running it on a different server and proxying requests.
+# This netlify.toml focuses on the frontend deployment.
